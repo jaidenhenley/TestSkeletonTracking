@@ -27,6 +27,8 @@ final class AEDCabinetController {
     private let holder = Entity()
     private var door: Entity?
     private var closed = Transform()
+    /// Picking the AED up by its handle, carrying it and dropping it. Nil if the unit failed to load.
+    private var carry: AEDCarry?
 
     // Door geometry, measured once from the loaded model (all in the door's parent space).
     private var hinge: SIMD3<Float> = .zero
@@ -74,16 +76,25 @@ final class AEDCabinetController {
     func load() async {
         do {
             let model = try await Entity(named: "AEDCabinet")
-
             holder.addChild(model)
-            model.generateCollisionShapes(recursive: true)
-            model.components.set(InputTargetComponent())
-            Self.enableGroundingShadows(on: model)
 
             guard let d = model.findEntity(named: "AED_Door"), let parent = d.parent else {
                 appModel.aedStatus = "Model loaded, but no entity named AED_Door."
                 return
             }
+
+            // Seat the AED unit inside before collision shapes and shadows so it gets both too.
+            var aedNote = ""
+            do {
+                let unit = try await AEDInsert.place(in: model, door: d)
+                carry = AEDCarry(unit: unit, world: root)
+            } catch {
+                aedNote = " · AED unit missing: \(error.localizedDescription)"
+            }
+
+            model.generateCollisionShapes(recursive: true)
+            model.components.set(InputTargetComponent())
+            Self.enableGroundingShadows(on: model)
             self.model = model
             lastFlip = appModel.aedFlipCabinet
             let depth = orient(model: model, flipped: lastFlip)
@@ -94,7 +105,7 @@ final class AEDCabinetController {
             closed = d.transform
             measureDoor(d, parent: parent)
             placeFloating()
-            appModel.aedStatus = "Cabinet loaded"
+            appModel.aedStatus = "Cabinet loaded" + aedNote
         } catch {
             appModel.aedStatus = "Couldn't load AEDCabinet.usdz: \(error.localizedDescription)"
         }
@@ -349,7 +360,12 @@ final class AEDCabinetController {
         }
 
         let anchors = handTracking.latestAnchors
-        let poses = [anchors.leftHand, anchors.rightHand].compactMap { $0 }.compactMap(HandPose.init(anchor:))
+        let allPoses = [anchors.leftHand, anchors.rightHand].compactMap { $0 }.compactMap(HandPose.init(anchor:))
+
+        // The AED: grab it by the handle once the door is open, carry it, drop it or put it back.
+        carry?.update(poses: allPoses, doorAngle: angle, dt: dt) { appModel.aedStatus = $0 }
+        // The hand carrying the AED is busy; it neither pulls nor pushes the door.
+        let poses = allPoses.filter { $0.chirality != carry?.carryingHand }
 
         var target = angle
         var driven = false

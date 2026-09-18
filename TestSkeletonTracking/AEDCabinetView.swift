@@ -21,6 +21,17 @@ struct AEDCabinetView: View {
             do {
                 let model = try await Entity(named: "AEDCabinet")
 
+                guard let d = model.findEntity(named: "AED_Door") else {
+                    loadError = "Loaded the model, but found no entity named AED_Door."
+                    return
+                }
+                door = d
+                closed = d.transform
+
+                // Seat the AED unit inside before collision shapes so it is tappable too.
+                do { try await AEDInsert.place(in: model, door: d) }
+                catch { loadError = "AED unit missing: \(error.localizedDescription)" }
+
                 let bounds = model.visualBounds(relativeTo: model)
                 model.position = -bounds.center
 
@@ -29,13 +40,6 @@ struct AEDCabinetView: View {
                 model.components.set(HoverEffectComponent())
 
                 content.add(model)
-
-                guard let d = model.findEntity(named: "AED_Door") else {
-                    loadError = "Loaded the model, but found no entity named AED_Door."
-                    return
-                }
-                door = d
-                closed = d.transform
             } catch {
                 loadError = "Couldn't load AEDCabinet.usdz: \(error.localizedDescription)"
             }
